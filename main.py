@@ -9,19 +9,55 @@ PATH = "C:\\Users\\User\\Documents\\repos\\alertsAnalysis\\RawData"
 PREFIX = "GetAlarmsHistory_"
 
 
-def _render_table(df: pd.DataFrame, center_cols: list, highlight_column: str = None, highlight_threshold: float = None, highlight_color: str = None) -> None:
+def _render_table(
+    df: pd.DataFrame,
+    center_cols: list,
+    highlight_column: str = None,
+    highlight_threshold: float = None,
+    highlight_color: str = None,
+    extreme_color_rules: dict = None,
+    no_color_column: str = None,
+    no_color_value: str = None,
+    row_color_column: str = None,
+    row_color_value: str = None,
+    row_color: str = None,
+) -> None:
     headers = ''.join(
         f'<th style="text-align:center; padding:8px 12px; border-bottom:1px solid #4EC9B0; color:#4EC9B0;">{col}</th>'
         for col in df.columns
     )
     rows_html = ''
+
+    numeric_extremes = {}
+    if extreme_color_rules:
+        for col in extreme_color_rules.keys():
+            if col not in df.columns:
+                continue
+            numeric_vals = pd.to_numeric(df[col], errors='coerce').dropna()
+            if numeric_vals.empty:
+                continue
+            numeric_extremes[col] = (numeric_vals.min(), numeric_vals.max())
+
     for _, row in df.iterrows():
         cells = ''
+        skip_row_coloring = (
+            no_color_column is not None
+            and no_color_column in df.columns
+            and str(row[no_color_column]) == str(no_color_value)
+        )
+        force_row_color = (
+            row_color_column is not None
+            and row_color_column in df.columns
+            and str(row[row_color_column]) == str(row_color_value)
+            and row_color is not None
+        )
         for col in df.columns:
             cell_style = f'text-align:{"center" if col in center_cols else "right"}; padding:6px 12px;'
+            if force_row_color:
+                cell_style += f'color: {row_color}; font-weight: 600;'
             
             # בדוק אם צריך להצביע את התא הזה
-            if highlight_column and col == highlight_column and highlight_threshold is not None and highlight_color is not None:
+            if (not skip_row_coloring) and highlight_column and col == highlight_column and highlight_threshold is not None and highlight_color is not None:
                 value = row[col]
                 # הסר את ה-% אם קיים
                 if isinstance(value, str):
@@ -37,6 +73,16 @@ def _render_table(df: pd.DataFrame, center_cols: list, highlight_column: str = N
                 
                 if value is not None and value < highlight_threshold:
                     cell_style += f'color: {highlight_color};'
+
+            if (not skip_row_coloring) and extreme_color_rules and col in numeric_extremes:
+                rule = extreme_color_rules.get(col, {})
+                value_num = pd.to_numeric(pd.Series([row[col]]), errors='coerce').iloc[0]
+                if pd.notna(value_num):
+                    min_val, max_val = numeric_extremes[col]
+                    if value_num == min_val and 'min' in rule:
+                        cell_style += f'color: {rule["min"]};'
+                    if value_num == max_val and 'max' in rule:
+                        cell_style += f'color: {rule["max"]};'
             
             cells += f'<td style="{cell_style}">{row[col]}</td>'
         rows_html += f'<tr>{cells}</tr>'
@@ -337,7 +383,60 @@ def main():
                 if result_gap.empty:
                     st.warning('לא נמצאו נתונים לניתוח פערי זמן')
                 else:
+                    overall_parts = result_gap.copy()
+                    overall_parts['gap_num'] = pd.to_numeric(overall_parts['זמן ממוצע (דקות)'], errors='coerce').fillna(0.0)
+                    overall_parts['weighted_gap'] = overall_parts['gap_num'] * overall_parts['כמות אזעקות']
+                    overall_parts = (
+                        overall_parts.groupby('חלק ביום', as_index=False)
+                        .agg(total_weighted_gap=('weighted_gap', 'sum'), כמות_אזעקות=('כמות אזעקות', 'sum'))
+                    )
+                    overall_parts['זמן ממוצע (דקות)'] = overall_parts.apply(
+                        lambda r: 'לא היו אזעקות' if r['כמות_אזעקות'] == 0 else round(r['total_weighted_gap'] / r['כמות_אזעקות'], 2),
+                        axis=1,
+                    )
+                    day_part_order = {
+                        'חצות – 06:00': 0,
+                        '06:00 – 12:00': 1,
+                        '12:00 – 18:00': 2,
+                        '18:00 – חצות': 3,
+                    }
+                    overall_parts['_sort'] = overall_parts['חלק ביום'].map(day_part_order)
+                    total_alerts = int(overall_parts['כמות_אזעקות'].sum())
+                    total_weighted_gap = overall_parts['total_weighted_gap'].sum()
+                    total_avg_gap = 'לא היו אזעקות' if total_alerts == 0 else round(total_weighted_gap / total_alerts, 2)
+
+                    overall_parts = (
+                        overall_parts.sort_values('_sort')
+                        .drop(columns=['_sort', 'total_weighted_gap'])
+                        .rename(columns={'כמות_אזעקות': 'כמות אזעקות'})
+                        [['חלק ביום', 'זמן ממוצע (דקות)', 'כמות אזעקות']]
+                    )
+                    total_row = pd.DataFrame([
+                        {
+                            'חלק ביום': 'סה"כ',
+                            'זמן ממוצע (דקות)': total_avg_gap,
+                            'כמות אזעקות': total_alerts,
+                        }
+                    ])
+                    overall_parts = pd.concat([overall_parts, total_row], ignore_index=True)
+
                     st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>פער ממוצע בין התראה לאזעקה, לפי חלק ביום</h3>", unsafe_allow_html=True)
+                    _render_table(
+                        overall_parts,
+                        center_cols=['חלק ביום', 'זמן ממוצע (דקות)', 'כמות אזעקות'],
+                        extreme_color_rules={
+                            'זמן ממוצע (דקות)': {'min': '#8B0000', 'max': '#008000'},
+                            'כמות אזעקות': {'min': '#008000', 'max': '#8B0000'},
+                        },
+                        no_color_column='חלק ביום',
+                        no_color_value='סה"כ',
+                        row_color_column='חלק ביום',
+                        row_color_value='סה"כ',
+                        row_color='#4EC9B0',
+                    )
+                    st.markdown('<div style="margin-top:20px"></div>', unsafe_allow_html=True)
+
+                    st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>פער ממוצע בין התראה לאזעקה, לפי חלק ביום, לפי תאריך</h3>", unsafe_allow_html=True)
                     _render_table(result_gap, center_cols=['חלק ביום', 'זמן ממוצע (דקות)'], highlight_column='זמן ממוצע (דקות)', highlight_threshold=5, highlight_color='#8B0000')
                     st.markdown('<div style="margin-top:30px"></div>', unsafe_allow_html=True)
                     chart_base = result_gap.copy()
