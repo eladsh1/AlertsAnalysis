@@ -9,17 +9,36 @@ PATH = "C:\\Users\\User\\Documents\\repos\\alertsAnalysis\\RawData"
 PREFIX = "GetAlarmsHistory_"
 
 
-def _render_table(df: pd.DataFrame, center_cols: list) -> None:
+def _render_table(df: pd.DataFrame, center_cols: list, highlight_column: str = None, highlight_threshold: float = None, highlight_color: str = None) -> None:
     headers = ''.join(
         f'<th style="text-align:center; padding:8px 12px; border-bottom:1px solid #4EC9B0; color:#4EC9B0;">{col}</th>'
         for col in df.columns
     )
     rows_html = ''
     for _, row in df.iterrows():
-        cells = ''.join(
-            f'<td style="text-align:{"center" if col in center_cols else "right"}; padding:6px 12px;">{row[col]}</td>'
-            for col in df.columns
-        )
+        cells = ''
+        for col in df.columns:
+            cell_style = f'text-align:{"center" if col in center_cols else "right"}; padding:6px 12px;'
+            
+            # בדוק אם צריך להצביע את התא הזה
+            if highlight_column and col == highlight_column and highlight_threshold is not None and highlight_color is not None:
+                value = row[col]
+                # הסר את ה-% אם קיים
+                if isinstance(value, str):
+                    try:
+                        value = float(value.replace('%', '').strip())
+                    except ValueError:
+                        value = None
+                else:
+                    try:
+                        value = float(value)
+                    except (ValueError, TypeError):
+                        value = None
+                
+                if value is not None and value < highlight_threshold:
+                    cell_style += f'color: {highlight_color};'
+            
+            cells += f'<td style="{cell_style}">{row[col]}</td>'
         rows_html += f'<tr>{cells}</tr>'
     html = (
         f'<div style="max-height:370px; overflow-y:auto;">'
@@ -118,6 +137,20 @@ def main():
 
         .stSpinner div {
             color: white !important;
+        }
+
+        .vega-tooltip table {
+            width: 100%;
+        }
+
+        .vega-tooltip td:first-child {
+            text-align: right;
+            padding-right: 10px;
+            font-weight: bold;
+        }
+
+        .vega-tooltip td:last-child {
+            text-align: center;
         }
         </style>
         """,
@@ -305,7 +338,7 @@ def main():
                     st.warning('לא נמצאו נתונים לניתוח פערי זמן')
                 else:
                     st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>פער ממוצע בין התראה לאזעקה, לפי חלק ביום</h3>", unsafe_allow_html=True)
-                    _render_table(result_gap, center_cols=['חלק ביום', 'זמן ממוצע (דקות)'])
+                    _render_table(result_gap, center_cols=['חלק ביום', 'זמן ממוצע (דקות)'], highlight_column='זמן ממוצע (דקות)', highlight_threshold=5, highlight_color='#8B0000')
                     st.markdown('<div style="margin-top:30px"></div>', unsafe_allow_html=True)
                     chart_base = result_gap.copy()
                     chart_base['gap_num'] = pd.to_numeric(chart_base['זמן ממוצע (דקות)'], errors='coerce').fillna(0.0)
@@ -337,7 +370,7 @@ def main():
                     )
                     avg_line = (
                         alt.Chart(pd.DataFrame({'פער ממוצע חודשי': [monthly_avg]}))
-                        .mark_rule(color='red', strokeDash=[6, 3], strokeWidth=2)
+                        .mark_rule(color='#FF69B4', strokeDash=[6, 3], strokeWidth=2)
                         .encode(
                             y=alt.Y('פער ממוצע חודשי:Q'),
                             tooltip=[alt.Tooltip('פער ממוצע חודשי:Q', format='.1f')],
@@ -374,7 +407,7 @@ def main():
                     if 'end_alert' in result_table.columns:
                         result_table = result_table.drop(columns=['end_alert'])
                     st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>שיעור המרה יומי בין כמות ההתראות לכמות האזעקות</h3>", unsafe_allow_html=True)
-                    _render_table(result_table, center_cols=list(result_table.columns))
+                    _render_table(result_table, center_cols=list(result_table.columns), highlight_column='שיעור המרה', highlight_threshold=50, highlight_color='#8B0000')
                     st.markdown('<div style="margin-top:30px"></div>', unsafe_allow_html=True)
                     st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>שיעור המרה יומי</h3>", unsafe_allow_html=True)
                     conv_df = chart_df[['conversion_rate_float']].reset_index()
@@ -394,7 +427,7 @@ def main():
                     )
                     conv_avg_line = (
                         alt.Chart(pd.DataFrame({'ממוצע חודשי (%)': [conv_avg]}))
-                        .mark_rule(color='red', strokeDash=[6, 3], strokeWidth=2)
+                        .mark_rule(color='#FF69B4', strokeDash=[6, 3], strokeWidth=2)
                         .encode(
                             y=alt.Y('ממוצע חודשי (%):Q'),
                             tooltip=[alt.Tooltip('ממוצע חודשי (%):Q', format='.1f')],
