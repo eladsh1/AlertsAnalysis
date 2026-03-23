@@ -101,9 +101,9 @@ def main():
         }
 
         .stAlert.stSuccess {
-            background-color: rgba(78, 201, 176, 0.18) !important;
+            background-color: rgba(120, 49, 186, 0.18) !important;
             color: white !important;
-            border: 1px solid rgba(78, 201, 176, 0.5) !important;
+            border: 1px solid rgba(120, 49, 186, 0.5) !important;
         }
 
         .stAlert {
@@ -230,9 +230,24 @@ def main():
             file_count = st.session_state["df"]["file_name"].nunique()
             duration = st.session_state.get('load_duration', '')
             duration_str = f' | זמן הטעינה היה {duration} שניות' if duration != '' else ''
-            st.success(
-                f'{file_count} קבצים נטענו בהצלחה | סה"כ {len(st.session_state["df"])} שורות{duration_str}\n\n'
-                f'נתיב מקור הנתונים: {PATH}'
+            st.markdown(
+                f"""
+                <div style="
+                    background-color: rgba(120, 49, 186, 0.18);
+                    border: 1px solid rgba(120, 49, 186, 0.75);
+                    border-radius: 8px;
+                    color: white;
+                    direction: rtl;
+                    text-align: right;
+                    padding: 0.9rem 1rem;
+                    margin: 0.5rem 0 1rem 0;
+                    line-height: 1.6;
+                ">
+                    <div>{file_count} קבצים נטענו בהצלחה | סה"כ {len(st.session_state["df"])} שורות{duration_str}</div>
+                    <div style="margin-top: 0.6rem;">נתיב מקור הנתונים: {PATH}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
             loaded_files = set(st.session_state["df"]["file_name"].dropna().unique())
@@ -310,7 +325,7 @@ def main():
                     base = alt.Chart(chart_df)
                     bar = (
                         base
-                        .mark_bar(color="#531E84")
+                        .mark_bar(color="#7831BA")
                         .encode(
                             x=alt.X('תאריך:O', sort=None, axis=alt.Axis(labelAngle=0, title=None, labelPadding=5)),
                             y=alt.Y('פער ממוצע יומי (דקות):Q', scale=alt.Scale(zero=True)),
@@ -367,7 +382,7 @@ def main():
                     conv_avg = conv_df['שיעור המרה (%)'].mean()
                     conv_bar = (
                         alt.Chart(conv_df)
-                        .mark_bar(color="#531E84")
+                        .mark_bar(color="#7831BA")
                         .encode(
                             x=alt.X('תאריך:O', sort='ascending', axis=alt.Axis(labelAngle=0, title=None, labelPadding=5)),
                             y=alt.Y('שיעור המרה (%):Q', scale=alt.Scale(zero=True)),

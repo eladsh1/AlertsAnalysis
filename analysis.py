@@ -109,9 +109,11 @@ def analyze_city_by_date(df, city_name):
     """
     מחשב אחוז המרה מ-pre_alert ל-true_alert עבור עיר מסוימת לפי תאריך
     ומחזיר DataFrame מסודר לפי תאריך עם ספירה ואחוז המרה.
+    
+    מתעלם מ-true_alert שמגיעה תוך 2 דקות אחרי true_alert בלי pre_alert בינהן.
 
     פרמטרים:
-    - df: DataFrame עם הנתונים (חייב לכלול עמודות 'city', 'alert_type', 'date')
+    - df: DataFrame עם הנתונים (חייב לכלול עמודות 'city', 'alert_type', 'date', 'time')
     - city_name: שם העיר לניתוח
 
     מחזיר:
@@ -124,9 +126,58 @@ def analyze_city_by_date(df, city_name):
     if df_city.empty:
         print(f"No data for city: {city_name}")
         return pd.DataFrame()
+    
+    # הוסף עמודת datetime וסדר לפי זמן
+    df_city['datetime'] = pd.to_datetime(df_city['date'] + ' ' + df_city['time'], errors='coerce')
+    df_city = df_city.dropna(subset=['datetime']).sort_values('datetime')
+    
+    # סנן true_alerts שמגיעות תוך 2 דקות של true_alert בלי pre_alert בינהן
+    true_alerts = df_city[df_city['alert_type'] == 'true_alert'].copy()
+    
+    if not true_alerts.empty:
+        filtered_true_alerts = []
+        
+        for idx, row in true_alerts.iterrows():
+            current_time = row['datetime']
+            
+            # מצא את ה-true_alert הקודמת
+            earlier_true_alerts = true_alerts[true_alerts['datetime'] < current_time]
+            previous_true_alert_time = None
+            if not earlier_true_alerts.empty:
+                previous_true_alert_time = earlier_true_alerts['datetime'].max()
+            
+            # בדוק אם צריך להתעלם מזו
+            should_include = True
+            if previous_true_alert_time is not None:
+                time_diff = (current_time - previous_true_alert_time).total_seconds() / 60
+                
+                # אם ההפרש < 2 דקות, בדוק אם יש pre_alert בינהן
+                if time_diff < 2:
+                    pre_alerts_between = df_city[
+                        (df_city['alert_type'] == 'pre_alert') & 
+                        (df_city['datetime'] > previous_true_alert_time) & 
+                        (df_city['datetime'] <= current_time)
+                    ]
+                    # אם אין pre_alert בטווח - תעלם ממנה
+                    if len(pre_alerts_between) == 0:
+                        should_include = False
+            
+            if should_include:
+                filtered_true_alerts.append(row)
+        
+        # צור DataFrame חדש עם ה-true_alerts המסוננות
+        if filtered_true_alerts:
+            df_filtered = pd.concat([
+                df_city[df_city['alert_type'] != 'true_alert'],
+                pd.DataFrame(filtered_true_alerts)
+            ])
+        else:
+            df_filtered = df_city[df_city['alert_type'] != 'true_alert']
+    else:
+        df_filtered = df_city
 
     # 3️⃣ ספירה לפי תאריך וסוג התרעה
-    counts_by_date = df_city.groupby(['date', 'alert_type']).size().unstack(fill_value=0)
+    counts_by_date = df_filtered.groupby(['date', 'alert_type']).size().unstack(fill_value=0)
 
     # 4️⃣ לוודא שהעמודות קיימות
     for col in ['pre_alert', 'true_alert']:
@@ -140,7 +191,6 @@ def analyze_city_by_date(df, city_name):
     # 6️⃣ מיון לפי תאריך
     counts_by_date = counts_by_date.sort_index(ascending=False)
 
-    counts_by_date
     return counts_by_date
 
 
