@@ -310,7 +310,7 @@ def main():
                     base = alt.Chart(chart_df)
                     bar = (
                         base
-                        .mark_bar(color='#8A2BE2')
+                        .mark_bar(color="#531E84")
                         .encode(
                             x=alt.X('תאריך:O', sort=None, axis=alt.Axis(labelAngle=0, title=None, labelPadding=5)),
                             y=alt.Y('פער ממוצע יומי (דקות):Q', scale=alt.Scale(zero=True)),
@@ -367,7 +367,7 @@ def main():
                     conv_avg = conv_df['שיעור המרה (%)'].mean()
                     conv_bar = (
                         alt.Chart(conv_df)
-                        .mark_bar(color='#8A2BE2')
+                        .mark_bar(color="#531E84")
                         .encode(
                             x=alt.X('תאריך:O', sort='ascending', axis=alt.Axis(labelAngle=0, title=None, labelPadding=5)),
                             y=alt.Y('שיעור המרה (%):Q', scale=alt.Scale(zero=True)),
