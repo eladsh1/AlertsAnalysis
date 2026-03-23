@@ -3,6 +3,108 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # %%
+_DAY_PART_ORDER = {
+    'חצות – 06:00': 0,
+    '06:00 – 12:00': 1,
+    '12:00 – 18:00': 2,
+    '18:00 – חצות': 3,
+}
+
+
+def _day_part_label(hour: int) -> str:
+    if hour < 6:
+        return 'חצות – 06:00'
+    elif hour < 12:
+        return '06:00 – 12:00'
+    elif hour < 18:
+        return '12:00 – 18:00'
+    else:
+        return '18:00 – חצות'
+
+
+def analyze_time_gap(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate average time gap (in minutes) between a pre_alert and the
+    following true_alert.
+
+    The result is aggregated by date and by 4 day-part buckets.
+    A true_alert with no matching pre_alert in the previous 15 minutes
+    is counted as a 0-minute gap.
+    """
+    df = df.copy()
+    df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'], errors='coerce')
+    df = df.dropna(subset=['datetime'])
+
+    true_alerts = df[df['alert_type'] == 'true_alert'].copy()
+    pre_alerts = df[df['alert_type'] == 'pre_alert'].copy()
+
+    if true_alerts.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for city in true_alerts['city'].dropna().unique():
+        city_true = true_alerts[true_alerts['city'] == city].sort_values('datetime')
+        city_pre = pre_alerts[pre_alerts['city'] == city].sort_values('datetime')
+
+        if city_pre.empty:
+            city_true = city_true.copy()
+            city_true['gap_minutes'] = 0.0
+            rows.append(city_true[['date', 'hour', 'gap_minutes']])
+        else:
+            merged = pd.merge_asof(
+                city_true[['datetime', 'date', 'hour']].reset_index(drop=True),
+                city_pre[['datetime']].reset_index(drop=True).rename(columns={'datetime': 'pre_alert_time'}),
+                left_on='datetime',
+                right_on='pre_alert_time',
+                direction='backward',
+                tolerance=pd.Timedelta(minutes=15),
+            )
+            merged['gap_minutes'] = (
+                (merged['datetime'] - merged['pre_alert_time']).dt.total_seconds() / 60
+            ).fillna(0.0)
+            rows.append(merged[['date', 'hour', 'gap_minutes']])
+
+    combined = pd.concat(rows, ignore_index=True)
+    combined['day_part'] = combined['hour'].apply(_day_part_label)
+
+    result = (
+        combined.groupby(['date', 'day_part'])
+        .agg(
+            gap_minutes_avg=('gap_minutes', 'mean'),
+            alerts_count=('gap_minutes', 'size'),
+        )
+        .reset_index()
+    )
+
+    # Fill missing date × day_part combinations with "לא היו אזעקות"
+    all_dates = result['date'].unique()
+    all_parts = list(_DAY_PART_ORDER.keys())
+    full_index = pd.MultiIndex.from_product([all_dates, all_parts], names=['date', 'day_part'])
+    result = (
+        result.set_index(['date', 'day_part'])
+        .reindex(full_index)
+        .reset_index()
+    )
+    daily_totals = (
+        combined.groupby('date')
+        .size()
+        .reset_index(name='סה"כ אזעקות ביום')
+        .rename(columns={'date': 'תאריך'})
+    )
+
+    result.columns = ['תאריך', 'חלק ביום', 'זמן ממוצע (דקות)', 'כמות אזעקות']
+    result['זמן ממוצע (דקות)'] = result['זמן ממוצע (דקות)'].apply(
+        lambda x: 'לא היו אזעקות' if pd.isna(x) else round(x, 2)
+    )
+    result['כמות אזעקות'] = result['כמות אזעקות'].fillna(0).astype(int)
+    result = result.merge(daily_totals, on='תאריך', how='left')
+    result['סה"כ אזעקות ביום'] = result['סה"כ אזעקות ביום'].fillna(0).astype(int)
+    result['_sort'] = result['חלק ביום'].map(_DAY_PART_ORDER)
+    result = result.sort_values(['תאריך', '_sort'], ascending=[False, True]).drop(columns=['_sort']).reset_index(drop=True)
+    return result
+
+
+# %%
 def analyze_city_by_date(df, city_name):
     """
     מחשב אחוז המרה מ-pre_alert ל-true_alert עבור עיר מסוימת לפי תאריך
@@ -81,6 +183,7 @@ def run_streamlit_app(df):
 
 
 if __name__ == '__main__':
-    run_streamlit_app(df)
+    empty_df = pd.DataFrame(columns=['city', 'alert_type', 'date'])
+    run_streamlit_app(empty_df)
 
 # %%
