@@ -2,7 +2,13 @@ import time
 import pandas as pd
 import streamlit as st
 import altair as alt
-from analysis import analyze_city_by_date, get_conversion_chart, analyze_time_gap
+try:
+    import plotly.graph_objects as go
+except ImportError:
+    go = None
+from analysis import analyze_city_by_date, get_conversion_chart, analyze_time_gap, count_true_alerts_without_pre_alert
+from analysis import count_true_alerts_without_pre_alert_by_day_part
+from analysis import DAY_PART_ORDER
 from etl import run_data_load_pipeline
 
 PATH = "C:\\Users\\User\\Documents\\repos\\alertsAnalysis\\RawData"
@@ -21,19 +27,26 @@ def _render_table(
     row_color_column: str = None,
     row_color_value: str = None,
     row_color: str = None,
+    container_extra_style: str = '',
+    column_style_overrides: dict = None,
 ) -> None:
+    column_style_overrides = column_style_overrides or {}
     headers = ''.join(
-        f'<th style="text-align:center; padding:8px 12px; border-bottom:1px solid #4EC9B0; color:#4EC9B0;">{col}</th>'
+        f'<th style="text-align:center; padding:8px 12px; border-bottom:1px solid #4EC9B0; color:#4EC9B0; {column_style_overrides.get(col, "")}">{col}</th>'
         for col in df.columns
     )
     rows_html = ''
 
     numeric_extremes = {}
     if extreme_color_rules:
+        df_for_extremes = df
+        if no_color_column is not None and no_color_column in df.columns:
+            df_for_extremes = df[df[no_color_column].astype(str) != str(no_color_value)]
+
         for col in extreme_color_rules.keys():
-            if col not in df.columns:
+            if col not in df_for_extremes.columns:
                 continue
-            numeric_vals = pd.to_numeric(df[col], errors='coerce').dropna()
+            numeric_vals = pd.to_numeric(df_for_extremes[col], errors='coerce').dropna()
             if numeric_vals.empty:
                 continue
             numeric_extremes[col] = (numeric_vals.min(), numeric_vals.max())
@@ -52,7 +65,7 @@ def _render_table(
             and row_color is not None
         )
         for col in df.columns:
-            cell_style = f'text-align:{"center" if col in center_cols else "right"}; padding:6px 12px;'
+            cell_style = f'text-align:{"center" if col in center_cols else "right"}; padding:6px 12px; {column_style_overrides.get(col, "")}'
             if force_row_color:
                 cell_style += f'color: {row_color}; font-weight: 600;'
             
@@ -87,7 +100,7 @@ def _render_table(
             cells += f'<td style="{cell_style}">{row[col]}</td>'
         rows_html += f'<tr>{cells}</tr>'
     html = (
-        f'<div style="max-height:370px; overflow-y:auto;">'
+        f'<div style="max-height:370px; overflow-y:auto; {container_extra_style}">'
         f'<table style="width:100%; border-collapse:collapse; direction:rtl; color:#e8e8e8;">'
         f'<thead style="position:sticky; top:0; background-color:#1f1f1f;"><tr>{headers}</tr></thead>'
         f'<tbody>{rows_html}</tbody>'
@@ -102,9 +115,16 @@ def main():
     st.markdown(
         """
         <style>
+        @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap');
+
         body {
             background-color: #181818;
             color: #e8e8e8;
+            font-family: 'Open Sans', sans-serif !important;
+        }
+
+        .stApp, .block-container, .stMarkdown, .stSelectbox, .stButton, .stTabs, .stDataFrame, .stAlert {
+            font-family: 'Open Sans', sans-serif !important;
         }
 
         .block-container {
@@ -379,7 +399,15 @@ def main():
             with analysis_tab_1:
                 df_gap = _df_loaded
                 df_gap_filtered = df_gap[df_gap['city'] == selected_city_shared]
-                result_gap = analyze_time_gap(df_gap_filtered)
+                df_gap_effective = df_gap_filtered.copy()
+                if 'is_not_double_alert' in df_gap_effective.columns:
+                    double_alert_mask = (
+                        (df_gap_effective['alert_type'] == 'true_alert')
+                        & (~df_gap_effective['is_not_double_alert'].fillna(False).astype(bool))
+                    )
+                    df_gap_effective = df_gap_effective[~double_alert_mask].copy()
+
+                result_gap = analyze_time_gap(df_gap_effective)
                 if result_gap.empty:
                     st.warning('לא נמצאו נתונים לניתוח פערי זמן')
                 else:
@@ -391,19 +419,46 @@ def main():
                         .agg(total_weighted_gap=('weighted_gap', 'sum'), כמות_אזעקות=('כמות אזעקות', 'sum'))
                     )
                     overall_parts['זמן ממוצע (דקות)'] = overall_parts.apply(
-                        lambda r: 'לא היו אזעקות' if r['כמות_אזעקות'] == 0 else round(r['total_weighted_gap'] / r['כמות_אזעקות'], 2),
+                        lambda r: 'לא היו אזעקות' if r['כמות_אזעקות'] == 0 else round(r['total_weighted_gap'] / r['כמות_אזעקות'], 1),
                         axis=1,
                     )
-                    day_part_order = {
-                        'חצות – 06:00': 0,
-                        '06:00 – 12:00': 1,
-                        '12:00 – 18:00': 2,
-                        '18:00 – חצות': 3,
-                    }
-                    overall_parts['_sort'] = overall_parts['חלק ביום'].map(day_part_order)
+                    overall_parts['_sort'] = overall_parts['חלק ביום'].map(DAY_PART_ORDER)
                     total_alerts = int(overall_parts['כמות_אזעקות'].sum())
                     total_weighted_gap = overall_parts['total_weighted_gap'].sum()
-                    total_avg_gap = 'לא היו אזעקות' if total_alerts == 0 else round(total_weighted_gap / total_alerts, 2)
+                    total_avg_gap = 'לא היו אזעקות' if total_alerts == 0 else round(total_weighted_gap / total_alerts, 1)
+                    no_pre_by_part = count_true_alerts_without_pre_alert_by_day_part(df_gap_effective)
+                    avg_without_no_pre_by_part = pd.DataFrame(columns=['חלק ביום', 'זמן ממוצע, בנטרול אזעקות בלי התראה'])
+                    total_avg_without_no_pre = 'לא היו אזעקות'
+
+                    required_no_pre_cols = {
+                        'alert_type',
+                        'date_part',
+                        'is_alert_without_pre_alert',
+                        'time_between_pre_to_true_alert',
+                    }
+                    if required_no_pre_cols.issubset(df_gap_effective.columns):
+                        true_with_pre = df_gap_effective[
+                            (df_gap_effective['alert_type'] == 'true_alert')
+                            & (~df_gap_effective['is_alert_without_pre_alert'].fillna(False).astype(bool))
+                        ].copy()
+                        true_with_pre['time_between_pre_to_true_alert'] = pd.to_numeric(
+                            true_with_pre['time_between_pre_to_true_alert'], errors='coerce'
+                        )
+                        true_with_pre = true_with_pre.dropna(subset=['date_part', 'time_between_pre_to_true_alert'])
+
+                        avg_without_no_pre_by_part = (
+                            true_with_pre.groupby('date_part', as_index=False)
+                            .agg(avg_gap_without_no_pre=('time_between_pre_to_true_alert', 'mean'))
+                            .rename(columns={'date_part': 'חלק ביום'})
+                        )
+                        avg_without_no_pre_by_part['זמן ממוצע, בנטרול אזעקות בלי התראה'] = (
+                            avg_without_no_pre_by_part['avg_gap_without_no_pre'].round(1)
+                        )
+                        avg_without_no_pre_by_part = avg_without_no_pre_by_part[
+                            ['חלק ביום', 'זמן ממוצע, בנטרול אזעקות בלי התראה']
+                        ]
+                        if not true_with_pre.empty:
+                            total_avg_without_no_pre = round(true_with_pre['time_between_pre_to_true_alert'].mean(), 1)
 
                     overall_parts = (
                         overall_parts.sort_values('_sort')
@@ -411,33 +466,118 @@ def main():
                         .rename(columns={'כמות_אזעקות': 'כמות אזעקות'})
                         [['חלק ביום', 'זמן ממוצע (דקות)', 'כמות אזעקות']]
                     )
+                    overall_parts = overall_parts.merge(no_pre_by_part, on='חלק ביום', how='left')
+                    overall_parts['כמות אזעקות ללא התראה'] = overall_parts['כמות אזעקות ללא התראה'].fillna(0).astype(int)
+                    overall_parts = overall_parts.merge(avg_without_no_pre_by_part, on='חלק ביום', how='left')
+                    overall_parts['זמן ממוצע, בנטרול אזעקות בלי התראה'] = overall_parts[
+                        'זמן ממוצע, בנטרול אזעקות בלי התראה'
+                    ].apply(lambda x: 'לא היו אזעקות' if pd.isna(x) else round(float(x), 1))
                     total_row = pd.DataFrame([
                         {
                             'חלק ביום': 'סה"כ',
                             'זמן ממוצע (דקות)': total_avg_gap,
                             'כמות אזעקות': total_alerts,
+                            'כמות אזעקות ללא התראה': int(overall_parts['כמות אזעקות ללא התראה'].sum()),
+                            'זמן ממוצע, בנטרול אזעקות בלי התראה': total_avg_without_no_pre,
                         }
                     ])
                     overall_parts = pd.concat([overall_parts, total_row], ignore_index=True)
+                    overall_parts = overall_parts[
+                        [
+                            'חלק ביום',
+                            'זמן ממוצע (דקות)',
+                            'זמן ממוצע, בנטרול אזעקות בלי התראה',
+                            'כמות אזעקות',
+                            'כמות אזעקות ללא התראה',
+                        ]
+                    ]
+                    no_pre_count = count_true_alerts_without_pre_alert(df_gap_effective)
+                    total_true_alerts = int((df_gap_effective['alert_type'] == 'true_alert').sum())
+                    no_pre_pct = (no_pre_count / total_true_alerts * 100) if total_true_alerts > 0 else 0.0
 
                     st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>פער ממוצע בין התראה לאזעקה, לפי חלק ביום</h3>", unsafe_allow_html=True)
-                    _render_table(
-                        overall_parts,
-                        center_cols=['חלק ביום', 'זמן ממוצע (דקות)', 'כמות אזעקות'],
-                        extreme_color_rules={
-                            'זמן ממוצע (דקות)': {'min': '#8B0000', 'max': '#008000'},
-                            'כמות אזעקות': {'min': '#008000', 'max': '#8B0000'},
-                        },
-                        no_color_column='חלק ביום',
-                        no_color_value='סה"כ',
-                        row_color_column='חלק ביום',
-                        row_color_value='סה"כ',
-                        row_color='#4EC9B0',
+                    table_col, gauge_col = st.columns([3, 1])
+
+                    with table_col:
+                        _render_table(
+                            overall_parts,
+                            center_cols=['חלק ביום', 'זמן ממוצע (דקות)', 'זמן ממוצע, בנטרול אזעקות בלי התראה', 'כמות אזעקות', 'כמות אזעקות ללא התראה'],
+                            column_style_overrides={
+                                'חלק ביום': 'width: 15%; min-width: 150px;',
+                                'זמן ממוצע (דקות)': 'width: 13%; min-width: 110px;',
+                                'זמן ממוצע, בנטרול אזעקות בלי התראה': 'width: 20%; min-width: 130px;',
+                                'כמות אזעקות ללא התראה': 'width: 20%; min-width: 90px;',
+                            },
+                            extreme_color_rules={
+                                'זמן ממוצע (דקות)': {'min': '#8B0000', 'max': '#008000'},
+                                'זמן ממוצע, בנטרול אזעקות בלי התראה': {'min': '#8B0000', 'max': '#008000'},
+                                'כמות אזעקות': {'min': '#008000', 'max': '#8B0000'},
+                                'כמות אזעקות ללא התראה': {'max': '#8B0000'},
+                            },
+                            no_color_column='חלק ביום',
+                            no_color_value='סה"כ',
+                            row_color_column='חלק ביום',
+                            row_color_value='סה"כ',
+                            row_color='#4EC9B0',
+                            container_extra_style='border-left:2px solid #4EC9B0; padding-left:16px;',
+                        )
+
+                    with gauge_col:
+                        st.markdown("<div style='text-align:center; color:#4EC9B0; font-weight:600; margin-bottom:6px;'>שיעור אזעקות ללא התראה מקדימה</div>", unsafe_allow_html=True)
+                        if go is not None:
+                            gauge_fig = go.Figure(
+                                go.Indicator(
+                                    mode='gauge+number',
+                                    value=no_pre_pct,
+                                    number={'suffix': '%', 'font': {'color': '#4EC9B0', 'size': 34}, 'valueformat': '.1f'},
+                                    gauge={
+                                        'axis': {'range': [0, 100], 'tickcolor': '#4EC9B0'},
+                                        'bar': {'color': '#4EC9B0'},
+                                        'bgcolor': '#2A2A2A',
+                                        'bordercolor': '#4EC9B0',
+                                        'steps': [
+                                            {'range': [0, 50], 'color': '#1f1f1f'},
+                                            {'range': [50, 100], 'color': '#3A1A1A'},
+                                        ],
+                                    },
+                                )
+                            )
+                            gauge_fig.update_layout(
+                                margin=dict(l=10, r=10, t=10, b=10),
+                                paper_bgcolor='#1f1f1f',
+                                plot_bgcolor='#1f1f1f',
+                                height=290,
+                                font={'color': '#4EC9B0'},
+                            )
+                            st.plotly_chart(gauge_fig, use_container_width=True, config={'displayModeBar': False})
+                        else:
+                            st.markdown(
+                                f"<div style='text-align:center; color:#4EC9B0; font-size:28px; font-weight:700; margin-top:50px;'>{no_pre_pct:.1f}%</div>",
+                                unsafe_allow_html=True,
+                            )
+                        st.markdown(
+                            f"<div style='text-align:center; color:#a0a0a0; margin-top:2px; font-size:13px;'>"
+                            f"{no_pre_count} מתוך {total_true_alerts} אזעקות אמת"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                    st.markdown(
+                        "<div style='text-align:right; color:#a0a0a0; font-size:12px; margin-top:6px;'>* בנטרול אזעקות שהתרחשו בסמיכות מיידית לאזעקה אחרת</div>",
+                        unsafe_allow_html=True,
                     )
                     st.markdown('<div style="margin-top:20px"></div>', unsafe_allow_html=True)
 
+                    result_gap_display = result_gap.copy()
+                    result_gap_display['זמן ממוצע (דקות)'] = result_gap_display['זמן ממוצע (דקות)'].apply(
+                        lambda x: x if isinstance(x, str) else round(float(x), 1)
+                    )
+
                     st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>פער ממוצע בין התראה לאזעקה, לפי חלק ביום, לפי תאריך</h3>", unsafe_allow_html=True)
-                    _render_table(result_gap, center_cols=['חלק ביום', 'זמן ממוצע (דקות)'], highlight_column='זמן ממוצע (דקות)', highlight_threshold=5, highlight_color='#8B0000')
+                    _render_table(result_gap_display, center_cols=['חלק ביום', 'זמן ממוצע (דקות)'], highlight_column='זמן ממוצע (דקות)', highlight_threshold=5, highlight_color='#8B0000')
+                    st.markdown(
+                        "<div style='text-align:right; color:#a0a0a0; font-size:12px; margin-top:6px;'>* בנטרול אזעקות שהתרחשו בסמיכות מיידית לאזעקה אחרת</div>",
+                        unsafe_allow_html=True,
+                    )
                     st.markdown('<div style="margin-top:30px"></div>', unsafe_allow_html=True)
                     chart_base = result_gap.copy()
                     chart_base['gap_num'] = pd.to_numeric(chart_base['זמן ממוצע (דקות)'], errors='coerce').fillna(0.0)
@@ -486,6 +626,10 @@ def main():
                         .configure(padding={'top': 10, 'bottom': 60, 'left': 10, 'right': 10})
                     )
                     st.altair_chart(chart, use_container_width=True)
+                    st.markdown(
+                        "<div style='text-align:right; color:#a0a0a0; font-size:12px; margin-top:6px;'>* בנטרול אזעקות שהתרחשו בסמיכות מיידית לאזעקה אחרת</div>",
+                        unsafe_allow_html=True,
+                    )
 
             with analysis_tab_2:
                 df_for_analysis = _df_loaded

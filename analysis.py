@@ -2,25 +2,12 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-# %%
-_DAY_PART_ORDER = {
+DAY_PART_ORDER = {
     'חצות – 06:00': 0,
     '06:00 – 12:00': 1,
     '12:00 – 18:00': 2,
     '18:00 – חצות': 3,
 }
-
-
-def _day_part_label(hour: int) -> str:
-    if hour < 6:
-        return 'חצות – 06:00'
-    elif hour < 12:
-        return '06:00 – 12:00'
-    elif hour < 18:
-        return '12:00 – 18:00'
-    else:
-        return '18:00 – חצות'
-
 
 def analyze_time_gap(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -32,40 +19,25 @@ def analyze_time_gap(df: pd.DataFrame) -> pd.DataFrame:
     is counted as a 0-minute gap.
     """
     df = df.copy()
-    df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'], errors='coerce')
-    df = df.dropna(subset=['datetime'])
+    required_cols = {'date_part', 'time_between_pre_to_true_alert'}
+    if not required_cols.issubset(df.columns):
+        return pd.DataFrame()
 
     true_alerts = df[df['alert_type'] == 'true_alert'].copy()
-    pre_alerts = df[df['alert_type'] == 'pre_alert'].copy()
-
     if true_alerts.empty:
         return pd.DataFrame()
 
-    rows = []
-    for city in true_alerts['city'].dropna().unique():
-        city_true = true_alerts[true_alerts['city'] == city].sort_values('datetime')
-        city_pre = pre_alerts[pre_alerts['city'] == city].sort_values('datetime')
+    combined = true_alerts.rename(
+        columns={
+            'date_part': 'day_part',
+            'time_between_pre_to_true_alert': 'gap_minutes',
+        }
+    )[['date', 'day_part', 'gap_minutes']].copy()
+    combined = combined.dropna(subset=['date', 'day_part'])
+    combined['gap_minutes'] = pd.to_numeric(combined['gap_minutes'], errors='coerce').fillna(0.0)
 
-        if city_pre.empty:
-            city_true = city_true.copy()
-            city_true['gap_minutes'] = 0.0
-            rows.append(city_true[['date', 'hour', 'gap_minutes']])
-        else:
-            merged = pd.merge_asof(
-                city_true[['datetime', 'date', 'hour']].reset_index(drop=True),
-                city_pre[['datetime']].reset_index(drop=True).rename(columns={'datetime': 'pre_alert_time'}),
-                left_on='datetime',
-                right_on='pre_alert_time',
-                direction='backward',
-                tolerance=pd.Timedelta(minutes=15),
-            )
-            merged['gap_minutes'] = (
-                (merged['datetime'] - merged['pre_alert_time']).dt.total_seconds() / 60
-            ).fillna(0.0)
-            rows.append(merged[['date', 'hour', 'gap_minutes']])
-
-    combined = pd.concat(rows, ignore_index=True)
-    combined['day_part'] = combined['hour'].apply(_day_part_label)
+    if combined.empty:
+        return pd.DataFrame()
 
     result = (
         combined.groupby(['date', 'day_part'])
@@ -78,7 +50,7 @@ def analyze_time_gap(df: pd.DataFrame) -> pd.DataFrame:
 
     # Fill missing date × day_part combinations with "לא היו אזעקות"
     all_dates = result['date'].unique()
-    all_parts = list(_DAY_PART_ORDER.keys())
+    all_parts = sorted(result['day_part'].dropna().unique(), key=lambda p: DAY_PART_ORDER.get(p, 99))
     full_index = pd.MultiIndex.from_product([all_dates, all_parts], names=['date', 'day_part'])
     result = (
         result.set_index(['date', 'day_part'])
@@ -99,9 +71,81 @@ def analyze_time_gap(df: pd.DataFrame) -> pd.DataFrame:
     result['כמות אזעקות'] = result['כמות אזעקות'].fillna(0).astype(int)
     result = result.merge(daily_totals, on='תאריך', how='left')
     result['סה"כ אזעקות ביום'] = result['סה"כ אזעקות ביום'].fillna(0).astype(int)
-    result['_sort'] = result['חלק ביום'].map(_DAY_PART_ORDER)
+    result['_sort'] = result['חלק ביום'].map(DAY_PART_ORDER)
     result = result.sort_values(['תאריך', '_sort'], ascending=[False, True]).drop(columns=['_sort']).reset_index(drop=True)
     return result
+
+
+def count_true_alerts_without_pre_alert(df: pd.DataFrame, lookback_minutes: int = 15) -> int:
+    """
+    Count true_alert events that do not have a preceding pre_alert
+    in the previous lookback_minutes window (same city).
+    """
+    df = df.copy()
+    if 'is_alert_without_pre_alert' in df.columns:
+        return int(
+            ((df['alert_type'] == 'true_alert') & (df['is_alert_without_pre_alert'].astype(bool))).sum()
+        )
+
+    df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'], errors='coerce')
+    df = df.dropna(subset=['datetime'])
+
+    true_alerts = df[df['alert_type'] == 'true_alert'].copy()
+    pre_alerts = df[df['alert_type'] == 'pre_alert'].copy()
+
+    if true_alerts.empty:
+        return 0
+
+    no_pre_count = 0
+    for city in true_alerts['city'].dropna().unique():
+        city_true = true_alerts[true_alerts['city'] == city].sort_values('datetime')
+        city_pre = pre_alerts[pre_alerts['city'] == city].sort_values('datetime')
+
+        if city_pre.empty:
+            no_pre_count += len(city_true)
+            continue
+
+        merged = pd.merge_asof(
+            city_true[['datetime']].reset_index(drop=True),
+            city_pre[['datetime']].reset_index(drop=True).rename(columns={'datetime': 'pre_alert_time'}),
+            left_on='datetime',
+            right_on='pre_alert_time',
+            direction='backward',
+            tolerance=pd.Timedelta(minutes=lookback_minutes),
+        )
+        no_pre_count += int(merged['pre_alert_time'].isna().sum())
+
+    return no_pre_count
+
+
+def count_true_alerts_without_pre_alert_by_day_part(df: pd.DataFrame, lookback_minutes: int = 15) -> pd.DataFrame:
+    """
+    Count true_alert events without a preceding pre_alert in the previous
+    lookback_minutes window, grouped by day part.
+    """
+    df = df.copy()
+    required_cols = {'date_part', 'is_alert_without_pre_alert'}
+    if not required_cols.issubset(df.columns):
+        return pd.DataFrame(columns=['חלק ביום', 'כמות אזעקות ללא התראה'])
+
+    true_no_pre = df[
+        (df['alert_type'] == 'true_alert')
+        & (df['is_alert_without_pre_alert'].astype(bool))
+    ].copy()
+    grouped = (
+        true_no_pre.groupby('date_part', as_index=False)
+        .size()
+        .rename(columns={'date_part': 'חלק ביום', 'size': 'כמות אזעקות ללא התראה'})
+    )
+
+    all_parts = pd.DataFrame({
+        'חלק ביום': sorted(df['date_part'].dropna().unique(), key=lambda p: DAY_PART_ORDER.get(p, 99))
+    })
+    grouped = all_parts.merge(grouped, on='חלק ביום', how='left')
+    grouped['כמות אזעקות ללא התראה'] = grouped['כמות אזעקות ללא התראה'].fillna(0).astype(int)
+    grouped['_sort'] = grouped['חלק ביום'].map(DAY_PART_ORDER)
+    grouped = grouped.sort_values('_sort').drop(columns=['_sort']).reset_index(drop=True)
+    return grouped
 
 
 # %%
