@@ -9,6 +9,7 @@ except ImportError:
 from analysis import analyze_city_by_date, get_conversion_chart, analyze_time_gap, count_true_alerts_without_pre_alert
 from analysis import count_true_alerts_without_pre_alert_by_day_part
 from analysis import DAY_PART_ORDER
+from analysis import compute_hourly_avg, compute_hourly_avg_mean_of_city_means
 from etl import run_data_load_pipeline
 
 PATH = "C:\\Users\\User\\Documents\\repos\\alertsAnalysis\\RawData"
@@ -145,6 +146,10 @@ def main():
             text-align: center;
         }
 
+        h3 {
+            color: #ffffff !important;
+        }
+
         .stTabs {
             color: #4EC9B0 !important;
         }
@@ -209,6 +214,12 @@ def main():
             width: 100%;
         }
 
+        .vega-tooltip {
+            direction: rtl;
+            text-align: right;
+            transform: translate(72px, 12px) !important;
+        }
+
         .vega-tooltip td:first-child {
             text-align: right;
             padding-right: 10px;
@@ -225,7 +236,7 @@ def main():
 
     st.set_page_config(page_title='אנליזת אזעקות - שאגת הארי', layout='wide')
     st.sidebar.title('ניווט')
-    page = st.sidebar.radio('בחר עמוד', ['טעינת קבצי JSON', 'ניתוח הנתונים'])
+    page = st.sidebar.radio('בחר עמוד', ['טעינת קבצי JSON', 'ניתוח הנתונים'], label_visibility='collapsed')
 
     # Force sidebar to right side by CSS transform
     st.markdown(
@@ -273,18 +284,19 @@ def main():
 
         [data-testid='stSidebar'] h1 {
             background-color: rgb(24, 24, 24) !important;
+            color: #ffffff !important;
         }
 
         .stRadio label {
-            color: #4EC9B0 !important;
+            color: #ffffff !important;
         }
 
         .stRadio [data-testid="stMarkdownContainer"] p {
-            color: #4EC9B0 !important;
+            color: #ffffff !important;
         }
 
         .stRadio input[type="radio"]:checked + label {
-            color: #4EC9B0 !important;
+            color: #ffffff !important;
             font-weight: bold;
         }
 
@@ -305,13 +317,17 @@ def main():
         input[type="radio"] {
             accent-color: #4EC9B0 !important;
         }
+
+        [data-testid='stSidebar'] [data-baseweb="select"] > div:first-child {
+            border-color: #4EC9B0 !important;
+        }
         </style>
         """,
         unsafe_allow_html=True
     )
 
     if page == 'טעינת קבצי JSON':
-        st.markdown("<h2 style='text-align:center; color:#4EC9B0; margin-bottom:2px;'>מערכת עיבוד וניתוח נתוני אזעקות</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align:center; color:#ffffff; margin-bottom:2px;'>מערכת עיבוד וניתוח נתוני אזעקות</h2>", unsafe_allow_html=True)
         st.markdown("<h3 style='text-align:right; color:#a0a0a0; margin-top:0;'>טעינת קבצי JSON</h3>", unsafe_allow_html=True)
         col1, col2 = st.columns([1, 4])
         with col1:
@@ -386,15 +402,95 @@ def main():
         if _df_loaded is None or _df_loaded.empty:
             st.info('צריך לטעון נתונים קודם מעמוד טעינת קבצי JSON')
         else:
-            st.markdown("<h2 style='text-align:center; color:#4EC9B0; margin-bottom:2px;'>מערכת עיבוד וניתוח נתוני אזעקות</h2>", unsafe_allow_html=True)
+            st.markdown("<h2 style='text-align:center; color:#ffffff; margin-bottom:2px;'>מערכת עיבוד וניתוח נתוני אזעקות</h2>", unsafe_allow_html=True)
             st.markdown("<h3 style='text-align:right; color:#a0a0a0; margin-top:0;'>ניתוח הנתונים</h3>", unsafe_allow_html=True)
             all_cities = sorted(_df_loaded['city'].dropna().unique())
-            selected_city_shared = st.selectbox('בחר עיר לניתוח', options=all_cities, key='shared_city_select')
+            selected_city_shared = st.sidebar.selectbox('בחר עיר לניתוח', options=all_cities, key='shared_city_select')
 
-            analysis_tab_1, analysis_tab_2 = st.tabs([
+            analysis_tab_hourly, analysis_tab_1, analysis_tab_2 = st.tabs([
+                "כמות אזעקות",
                 "פערי זמן",
                 "יחס התראות לאזעקות",
             ])
+
+            with analysis_tab_hourly:
+                df_hourly = _df_loaded[_df_loaded['city'] == selected_city_shared].copy()
+                if 'is_not_double_alert' in df_hourly.columns:
+                    hourly_double_alert_mask = (
+                        (df_hourly['alert_type'] == 'true_alert')
+                        & (~df_hourly['is_not_double_alert'].fillna(False).astype(bool))
+                    )
+                    df_hourly = df_hourly[~hourly_double_alert_mask].copy()
+
+                df_hourly_all = _df_loaded.copy()
+                if 'is_not_double_alert' in df_hourly_all.columns:
+                    hourly_double_alert_mask_all = (
+                        (df_hourly_all['alert_type'] == 'true_alert')
+                        & (~df_hourly_all['is_not_double_alert'].fillna(False).astype(bool))
+                    )
+                    df_hourly_all = df_hourly_all[~hourly_double_alert_mask_all].copy()
+
+                def _compute_hourly_avg(source_df: pd.DataFrame) -> pd.DataFrame:
+                    return compute_hourly_avg(source_df)
+
+                def _compute_hourly_avg_mean_of_city_means(source_df: pd.DataFrame) -> pd.DataFrame:
+                    return compute_hourly_avg_mean_of_city_means(source_df)
+
+                hourly_avg_city = _compute_hourly_avg(df_hourly)
+                hourly_avg_all = _compute_hourly_avg_mean_of_city_means(df_hourly_all)
+
+                if hourly_avg_city.empty and hourly_avg_all.empty:
+                    st.warning('לא נמצאו נתונים להצגת כמות אזעקות ממוצעת לפי שעה')
+                else:
+                    all_hours = pd.DataFrame({'hour': list(range(24))})
+                    hourly_avg_city = all_hours.merge(hourly_avg_city, on='hour', how='left')
+                    hourly_avg_city['כמות אזעקות ממוצעת'] = hourly_avg_city['כמות אזעקות ממוצעת'].fillna(0.0)
+
+                    hourly_avg_all = all_hours.merge(hourly_avg_all, on='hour', how='left')
+                    hourly_avg_all['כמות אזעקות ממוצעת'] = hourly_avg_all['כמות אזעקות ממוצעת'].fillna(0.0)
+
+                    hourly_compare = all_hours.copy()
+                    hourly_compare['עיר נבחרת'] = hourly_avg_city['כמות אזעקות ממוצעת']
+                    hourly_compare['כל הארץ'] = hourly_avg_all['כמות אזעקות ממוצעת']
+                    hourly_compare_long = hourly_compare.melt(
+                        id_vars='hour',
+                        value_vars=['עיר נבחרת', 'כל הארץ'],
+                        var_name='קבוצה',
+                        value_name='כמות אזעקות ממוצעת',
+                    )
+
+                    st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>כמות אזעקות ממוצעת, חלוקה לשעות</h3>", unsafe_allow_html=True)
+
+                    hour_base = alt.Chart(hourly_compare_long)
+                    hour_bar = (
+                        hour_base
+                        .mark_bar()
+                        .encode(
+                            x=alt.X('hour:O', sort=list(range(24)), axis=alt.Axis(title='שעה', labelAngle=0, labelPadding=5)),
+                            xOffset=alt.XOffset('קבוצה:N'),
+                            y=alt.Y('כמות אזעקות ממוצעת:Q', axis=alt.Axis(title='כמות אזעקות ממוצעת')),
+                            color=alt.Color(
+                                'קבוצה:N',
+                                scale=alt.Scale(domain=['עיר נבחרת', 'כל הארץ'], range=['#7831BA', '#FFA500']),
+                                legend=alt.Legend(title=None, orient='bottom', direction='horizontal', columns=2, offset=0, padding=0),
+                            ),
+                            tooltip=[
+                                alt.Tooltip('hour:O', title='שעה'),
+                                alt.Tooltip('קבוצה:N', title=''),
+                                alt.Tooltip('כמות אזעקות ממוצעת:Q', title='ממוצע', format='.2f'),
+                            ],
+                        )
+                    )
+                    hourly_chart = (
+                        hour_bar
+                        .properties(width='container', height=300)
+                        .configure(padding={'top': 10, 'bottom': 0, 'left': 10, 'right': 10})
+                    )
+                    st.altair_chart(hourly_chart, use_container_width=True)
+                    st.markdown(
+                        "<div style='text-align:right; color:#a0a0a0; font-size:12px; margin-top:6px;'>* בנטרול אזעקות שהתרחשו בסמיכות מיידית לאזעקה אחרת</div>",
+                        unsafe_allow_html=True,
+                    )
 
             with analysis_tab_1:
                 df_gap = _df_loaded
@@ -495,6 +591,59 @@ def main():
                     total_true_alerts = int((df_gap_effective['alert_type'] == 'true_alert').sum())
                     no_pre_pct = (no_pre_count / total_true_alerts * 100) if total_true_alerts > 0 else 0.0
 
+                    chart_base = result_gap.copy()
+                    chart_base['gap_num'] = pd.to_numeric(chart_base['זמן ממוצע (דקות)'], errors='coerce').fillna(0.0)
+                    chart_base['weighted_gap'] = chart_base['gap_num'] * chart_base['כמות אזעקות']
+                    chart_data = (
+                        chart_base.groupby('תאריך', as_index=True)
+                        .agg(total_weighted_gap=('weighted_gap', 'sum'), total_alerts=('כמות אזעקות', 'sum'))
+                    )
+                    chart_data['פער ממוצע יומי (דקות)'] = chart_data.apply(
+                        lambda r: 0.0 if r['total_alerts'] == 0 else r['total_weighted_gap'] / r['total_alerts'],
+                        axis=1,
+                    )
+                    chart_data = chart_data[['פער ממוצע יומי (דקות)']].sort_index()
+                    chart_df = chart_data.reset_index()
+                    chart_df.columns = ['תאריך', 'פער ממוצע יומי (דקות)']
+                    monthly_avg = chart_df['פער ממוצע יומי (דקות)'].mean()
+                    base = alt.Chart(chart_df)
+                    bar = (
+                        base
+                        .mark_bar(color="#7831BA")
+                        .encode(
+                            x=alt.X('תאריך:O', sort=None, axis=alt.Axis(labelAngle=0, title=None, labelPadding=5)),
+                            y=alt.Y('פער ממוצע יומי (דקות):Q', scale=alt.Scale(zero=True)),
+                            tooltip=[
+                                alt.Tooltip('תאריך:O'),
+                                alt.Tooltip('פער ממוצע יומי (דקות):Q', format='.1f'),
+                            ],
+                        )
+                    )
+                    avg_line = (
+                        alt.Chart(pd.DataFrame({'פער ממוצע חודשי': [monthly_avg]}))
+                        .mark_rule(color='#FF69B4', strokeDash=[6, 3], strokeWidth=2)
+                        .encode(
+                            y=alt.Y('פער ממוצע חודשי:Q'),
+                            tooltip=[alt.Tooltip('פער ממוצע חודשי:Q', format='.1f')],
+                        )
+                    )
+                    st.markdown(
+                        '<style>.vega-embed, .vega-embed svg, .vega-embed canvas { overflow: visible !important; }</style>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>פער ממוצע בין התראה לאזעקה (דקות)</h3>", unsafe_allow_html=True)
+                    chart = (
+                        (bar + avg_line)
+                        .properties(width='container', height=300)
+                        .configure(padding={'top': 10, 'bottom': 60, 'left': 10, 'right': 10})
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+                    st.markdown(
+                        "<div style='text-align:right; color:#a0a0a0; font-size:12px; margin-top:6px;'>* בנטרול אזעקות שהתרחשו בסמיכות מיידית לאזעקה אחרת</div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown('<div style="margin-top:20px"></div>', unsafe_allow_html=True)
+
                     st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>פער ממוצע בין התראה לאזעקה, לפי חלק ביום</h3>", unsafe_allow_html=True)
                     table_col, gauge_col = st.columns([3, 1])
 
@@ -578,58 +727,6 @@ def main():
                         "<div style='text-align:right; color:#a0a0a0; font-size:12px; margin-top:6px;'>* בנטרול אזעקות שהתרחשו בסמיכות מיידית לאזעקה אחרת</div>",
                         unsafe_allow_html=True,
                     )
-                    st.markdown('<div style="margin-top:30px"></div>', unsafe_allow_html=True)
-                    chart_base = result_gap.copy()
-                    chart_base['gap_num'] = pd.to_numeric(chart_base['זמן ממוצע (דקות)'], errors='coerce').fillna(0.0)
-                    chart_base['weighted_gap'] = chart_base['gap_num'] * chart_base['כמות אזעקות']
-                    chart_data = (
-                        chart_base.groupby('תאריך', as_index=True)
-                        .agg(total_weighted_gap=('weighted_gap', 'sum'), total_alerts=('כמות אזעקות', 'sum'))
-                    )
-                    chart_data['פער ממוצע יומי (דקות)'] = chart_data.apply(
-                        lambda r: 0.0 if r['total_alerts'] == 0 else r['total_weighted_gap'] / r['total_alerts'],
-                        axis=1,
-                    )
-                    chart_data = chart_data[['פער ממוצע יומי (דקות)']].sort_index()
-                    chart_df = chart_data.reset_index()
-                    chart_df.columns = ['תאריך', 'פער ממוצע יומי (דקות)']
-                    monthly_avg = chart_df['פער ממוצע יומי (דקות)'].mean()
-                    base = alt.Chart(chart_df)
-                    bar = (
-                        base
-                        .mark_bar(color="#7831BA")
-                        .encode(
-                            x=alt.X('תאריך:O', sort=None, axis=alt.Axis(labelAngle=0, title=None, labelPadding=5)),
-                            y=alt.Y('פער ממוצע יומי (דקות):Q', scale=alt.Scale(zero=True)),
-                            tooltip=[
-                                alt.Tooltip('תאריך:O'),
-                                alt.Tooltip('פער ממוצע יומי (דקות):Q', format='.1f'),
-                            ],
-                        )
-                    )
-                    avg_line = (
-                        alt.Chart(pd.DataFrame({'פער ממוצע חודשי': [monthly_avg]}))
-                        .mark_rule(color='#FF69B4', strokeDash=[6, 3], strokeWidth=2)
-                        .encode(
-                            y=alt.Y('פער ממוצע חודשי:Q'),
-                            tooltip=[alt.Tooltip('פער ממוצע חודשי:Q', format='.1f')],
-                        )
-                    )
-                    st.markdown(
-                        '<style>.vega-embed, .vega-embed svg, .vega-embed canvas { overflow: visible !important; }</style>',
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>פער יומי ממוצע</h3>", unsafe_allow_html=True)
-                    chart = (
-                        (bar + avg_line)
-                        .properties(width='container', height=300)
-                        .configure(padding={'top': 10, 'bottom': 60, 'left': 10, 'right': 10})
-                    )
-                    st.altair_chart(chart, use_container_width=True)
-                    st.markdown(
-                        "<div style='text-align:right; color:#a0a0a0; font-size:12px; margin-top:6px;'>* בנטרול אזעקות שהתרחשו בסמיכות מיידית לאזעקה אחרת</div>",
-                        unsafe_allow_html=True,
-                    )
 
             with analysis_tab_2:
                 df_for_analysis = _df_loaded
@@ -650,9 +747,6 @@ def main():
                     if 'end_alert' in result_table.columns:
                         result_table = result_table.drop(columns=['end_alert'])
                     st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>שיעור המרה יומי בין כמות ההתראות לכמות האזעקות</h3>", unsafe_allow_html=True)
-                    _render_table(result_table, center_cols=list(result_table.columns), highlight_column='שיעור המרה', highlight_threshold=50, highlight_color='#8B0000')
-                    st.markdown('<div style="margin-top:30px"></div>', unsafe_allow_html=True)
-                    st.markdown("<h3 style='text-align:right; color:#4EC9B0; margin-bottom:6px;'>שיעור המרה יומי</h3>", unsafe_allow_html=True)
                     conv_df = chart_df[['conversion_rate_float']].reset_index()
                     conv_df.columns = ['תאריך', 'שיעור המרה (%)']
                     conv_avg = conv_df['שיעור המרה (%)'].mean()
@@ -682,6 +776,8 @@ def main():
                         .configure(padding={'top': 10, 'bottom': 60, 'left': 10, 'right': 10})
                     )
                     st.altair_chart(conv_chart, use_container_width=True)
+                    st.markdown('<div style="margin-top:30px"></div>', unsafe_allow_html=True)
+                    _render_table(result_table, center_cols=list(result_table.columns), highlight_column='שיעור המרה', highlight_threshold=50, highlight_color='#8B0000')
 
 
 if __name__ == '__main__':

@@ -241,6 +241,97 @@ def analyze_city_by_date(df, city_name):
 # %%
 import streamlit as st
 
+def compute_hourly_avg(source_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute average number of true alerts per hour for a given DataFrame
+    (typically filtered to a single city).
+    Returns a DataFrame with columns ['hour', 'כמות אזעקות ממוצעת'].
+    """
+    source = source_df[source_df['alert_type'] == 'true_alert'].copy()
+    if 'hour' not in source.columns or source.empty:
+        return pd.DataFrame(columns=['hour', 'כמות אזעקות ממוצעת'])
+
+    source['hour'] = pd.to_numeric(source['hour'], errors='coerce')
+    source = source.dropna(subset=['hour'])
+    if source.empty:
+        return pd.DataFrame(columns=['hour', 'כמות אזעקות ממוצעת'])
+
+    source['hour'] = source['hour'].astype(int)
+    source = source[(source['hour'] >= 0) & (source['hour'] <= 23)]
+    if source.empty:
+        return pd.DataFrame(columns=['hour', 'כמות אזעקות ממוצעת'])
+
+    if 'date' in source.columns:
+        source['date_only'] = pd.to_datetime(source['date'], errors='coerce').dt.date
+        source = source.dropna(subset=['date_only'])
+        if not source.empty:
+            hourly_counts_by_date = (
+                source.groupby(['date_only', 'hour'], as_index=False)
+                .size()
+                .rename(columns={'size': 'כמות אזעקות'})
+            )
+            return (
+                hourly_counts_by_date.groupby('hour', as_index=False)
+                .agg(**{'כמות אזעקות ממוצעת': ('כמות אזעקות', 'mean')})
+            )
+
+    return (
+        source.groupby('hour', as_index=False)
+        .size()
+        .rename(columns={'size': 'כמות אזעקות ממוצעת'})
+    )
+
+
+def compute_hourly_avg_mean_of_city_means(source_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute a national average: first average per city per hour, then
+    average across cities — so that large cities don't dominate.
+    Returns a DataFrame with columns ['hour', 'כמות אזעקות ממוצעת'].
+    """
+    source = source_df[source_df['alert_type'] == 'true_alert'].copy()
+    required_cols = {'city', 'hour'}
+    if not required_cols.issubset(source.columns) or source.empty:
+        return pd.DataFrame(columns=['hour', 'כמות אזעקות ממוצעת'])
+
+    source['hour'] = pd.to_numeric(source['hour'], errors='coerce')
+    source = source.dropna(subset=['city', 'hour'])
+    if source.empty:
+        return pd.DataFrame(columns=['hour', 'כמות אזעקות ממוצעת'])
+
+    source['hour'] = source['hour'].astype(int)
+    source = source[(source['hour'] >= 0) & (source['hour'] <= 23)]
+    if source.empty:
+        return pd.DataFrame(columns=['hour', 'כמות אזעקות ממוצעת'])
+
+    if 'date' in source.columns:
+        source['date_only'] = pd.to_datetime(source['date'], errors='coerce').dt.date
+        source = source.dropna(subset=['date_only'])
+        if not source.empty:
+            city_hour_by_date = (
+                source.groupby(['city', 'date_only', 'hour'], as_index=False)
+                .size()
+                .rename(columns={'size': 'כמות אזעקות'})
+            )
+            city_hour_avg = (
+                city_hour_by_date.groupby(['city', 'hour'], as_index=False)
+                .agg(**{'ממוצע עירוני לשעה': ('כמות אזעקות', 'mean')})
+            )
+            return (
+                city_hour_avg.groupby('hour', as_index=False)
+                .agg(**{'כמות אזעקות ממוצעת': ('ממוצע עירוני לשעה', 'mean')})
+            )
+
+    city_hour_counts = (
+        source.groupby(['city', 'hour'], as_index=False)
+        .size()
+        .rename(columns={'size': 'כמות אזעקות'})
+    )
+    return (
+        city_hour_counts.groupby('hour', as_index=False)
+        .agg(**{'כמות אזעקות ממוצעת': ('כמות אזעקות', 'mean')})
+    )
+
+
 def get_conversion_chart(df_city_by_date):
     # df_city_by_date already has pre_alert, true_alert, conversion_rate columns
     # Convert conversion_rate string back to float for charting if needed
