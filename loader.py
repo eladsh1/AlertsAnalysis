@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
-from loader_utils import get_alert_key, get_city_name_from_file_name
+from loader_utils import get_alert_key, get_city_name_from_file_name, get_city_name_hebrew
 
 __all__ = ['Loader']
 
@@ -97,6 +97,7 @@ class Loader:
         df["file_name"] = file_path.name
         city = get_city_name_from_file_name(file_path.name)
         df['city'] = city
+        df['city_he'] = get_city_name_hebrew(city)
         df['alert_type'] = df['category'].apply(lambda x: get_alert_key(x, self.alert_dict))
         df['hour'] = pd.to_datetime(df['time'], format='%H:%M:%S').dt.hour
         df['date'] = pd.to_datetime(df['alertDate'], errors='coerce').dt.strftime('%Y-%m-%d')

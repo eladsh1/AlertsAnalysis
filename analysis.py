@@ -339,36 +339,3 @@ def get_conversion_chart(df_city_by_date):
     if 'conversion_rate' in chart_df.columns:
         chart_df['conversion_rate_float'] = chart_df['conversion_rate'].str.rstrip('%').replace('', '0').astype(float)
     return chart_df
-
-
-def run_streamlit_app(df):
-    st.set_page_config(page_title='ניתוח התראות', layout='wide')
-    st.title('יחס המרה בין התרעות לאזעקות אמת')
-    st.markdown('בחר עיר מהרשימה והתראה בסוגי התראה לפי תאריך.')
-
-    cities = sorted(df['city'].dropna().unique())
-    selected_city = st.selectbox('בחר עיר (דרופדאון)', options=cities)
-
-    if selected_city:
-        result = analyze_city_by_date(df, selected_city)
-        if result.empty:
-            st.warning(f'אין נתונים לעיר {selected_city}')
-            return
-
-        st.subheader(f'יחס המרה לעיר: {selected_city}')
-        chart_df = get_conversion_chart(result)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown('### טבלה')
-            st.dataframe(result)
-        with col2:
-            st.markdown('### גרף')
-            st.line_chart(chart_df['conversion_rate_float'])
-
-
-if __name__ == '__main__':
-    empty_df = pd.DataFrame(columns=['city', 'alert_type', 'date'])
-    run_streamlit_app(empty_df)
-
-# %%

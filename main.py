@@ -404,8 +404,28 @@ def main():
         else:
             st.markdown("<h2 style='text-align:center; color:#ffffff; margin-bottom:2px;'>מערכת עיבוד וניתוח נתוני אזעקות</h2>", unsafe_allow_html=True)
             st.markdown("<h3 style='text-align:right; color:#a0a0a0; margin-top:0;'>ניתוח הנתונים</h3>", unsafe_allow_html=True)
-            all_cities = sorted(_df_loaded['city'].dropna().unique())
-            selected_city_shared = st.sidebar.selectbox('בחר עיר לניתוח', options=all_cities, key='shared_city_select')
+            city_display_column = 'city_he' if 'city_he' in _df_loaded.columns else 'city'
+            city_options_df = (
+                _df_loaded[['city', city_display_column]]
+                .dropna(subset=['city'])
+                .drop_duplicates()
+                .sort_values(city_display_column)
+            )
+            city_display_map = dict(zip(city_options_df[city_display_column], city_options_df['city']))
+            city_display_options = list(city_display_map.keys())
+            default_city_display = city_options_df.loc[
+                city_options_df['city'] == 'Jerusalem', city_display_column
+            ]
+            default_city_index = 0
+            if not default_city_display.empty:
+                default_city_index = city_display_options.index(default_city_display.iloc[0])
+            selected_city_display = st.sidebar.selectbox(
+                'בחר עיר לניתוח',
+                options=city_display_options,
+                index=default_city_index,
+                key='shared_city_select',
+            )
+            selected_city_shared = city_display_map[selected_city_display]
 
             analysis_tab_hourly, analysis_tab_1, analysis_tab_2 = st.tabs([
                 "כמות אזעקות",
@@ -733,7 +753,7 @@ def main():
                 result = analyze_city_by_date(df_for_analysis, selected_city_shared)
 
                 if result.empty:
-                    st.warning(f'אין נתונים לעיר {selected_city_shared}')
+                    st.warning(f'אין נתונים לעיר {selected_city_display}')
                 else:
                     chart_df = get_conversion_chart(result)
                     result_table = result.reset_index().rename(

@@ -33,6 +33,7 @@ def _ensure_db_schema(conn: sqlite3.Connection):
             NAME_RU TEXT,
             file_name TEXT,
             city TEXT,
+            city_he TEXT,
             alert_type TEXT,
             hour INTEGER,
             date_part TEXT,
@@ -48,6 +49,7 @@ def _ensure_db_schema(conn: sqlite3.Connection):
         for row in conn.execute("PRAGMA table_info(alerts_data)").fetchall()
     }
     required_new_cols = {
+        'city_he': 'TEXT',
         'date_part': 'TEXT',
         'is_not_double_alert': 'BOOLEAN',
         'is_alert_without_pre_alert': 'BOOLEAN',
@@ -83,7 +85,7 @@ def load_and_prepare_data(folder_path: str, prefix: str, db_path: Path = DB_PATH
 
     expected_columns = ['city_zone', 'date', 'time', 'alertDate', 'category', 'category_desc',
        'matrix_id', 'rid', 'NAME_HE', 'NAME_EN', 'NAME_AR', 'NAME_RU',
-         'file_name', 'city', 'alert_type', 'hour', 'date_part',
+                 'file_name', 'city', 'city_he', 'alert_type', 'hour', 'date_part',
          'is_not_double_alert', 'is_alert_without_pre_alert', 'time_between_pre_to_true_alert']
 
     if set(expected_columns).issubset(df.columns):
@@ -94,7 +96,7 @@ def load_and_prepare_data(folder_path: str, prefix: str, db_path: Path = DB_PATH
         df = df[available]
 
     selected_cols = ['city_zone', 'date', 'time', 'alertDate', 'category', 'category_desc',
-         'NAME_HE', 'NAME_EN', 'file_name', 'city', 'alert_type', 'hour', 'date_part',
+            'NAME_HE', 'NAME_EN', 'file_name', 'city', 'city_he', 'alert_type', 'hour', 'date_part',
          'is_not_double_alert', 'is_alert_without_pre_alert', 'time_between_pre_to_true_alert']
     selected_cols = [c for c in selected_cols if c in df.columns]
     final_df = df[selected_cols]

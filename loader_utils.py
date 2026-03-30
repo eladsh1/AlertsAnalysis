@@ -7,8 +7,37 @@ import pandas as pd
 
 __all__ = [
     'get_city_name_from_file_name',
+    'get_city_name_hebrew',
     'get_alert_key',
 ]
+
+
+CITY_NAME_HEBREW_MAP = {
+    'Ariel': 'אריאל',
+    'Ashdod': 'אשדוד',
+    'Ashkelon': 'אשקלון',
+    'BatYam': 'בת ים',
+    'BeerSheva': 'באר שבע',
+    'BetShemesh': 'בית שמש',
+    'BneiBrak': 'בני ברק',
+    'Eilat': 'אילת',
+    'Haifa': 'חיפה',
+    'Hedera': 'חדרה',
+    'Hertzeliya': 'הרצליה',
+    'Holon': 'חולון',
+    'Jerusalem': 'ירושלים',
+    'KarneyShomron': 'קרני שומרון',
+    'KfarSaba': 'כפר סבא',
+    'KiryatShmona': 'קריית שמונה',
+    'ModiinMakabimReut': 'מודיעין-מכבים-רעות',
+    'Natanya': 'נתניה',
+    'Nazrat': 'נצרת',
+    'PetahTikva': 'פתח תקווה',
+    'RamatGan': 'רמת גן',
+    'Rehovot': 'רחובות',
+    'RishonLetzion': 'ראשון לציון',
+    'TelAviv': 'תל אביב',
+}
 
 
 def get_city_name_from_file_name(filename: str) -> Optional[str]:
@@ -23,6 +52,13 @@ def get_city_name_from_file_name(filename: str) -> Optional[str]:
         if match:
             return match.group(1)
     return None
+
+
+def get_city_name_hebrew(city_name: Optional[str]) -> Optional[str]:
+    """Translate the canonical city key to its Hebrew display name."""
+    if city_name is None:
+        return None
+    return CITY_NAME_HEBREW_MAP.get(city_name, city_name)
 
 
 def get_alert_key(value: Union[str, int], alert_dict: Dict[str, List[int]]) -> Optional[str]:
