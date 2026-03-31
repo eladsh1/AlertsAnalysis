@@ -1,4 +1,6 @@
 import time
+import os
+from pathlib import Path
 import pandas as pd
 import streamlit as st
 import altair as alt
@@ -12,7 +14,8 @@ from analysis import DAY_PART_ORDER
 from analysis import compute_hourly_avg, compute_hourly_avg_mean_of_city_means
 from etl import run_data_load_pipeline
 
-PATH = "C:\\Users\\User\\Documents\\repos\\alertsAnalysis\\RawData"
+BASE_DIR = Path(__file__).resolve().parent
+PATH = Path(os.getenv('RAW_DATA_PATH', BASE_DIR / 'RawData'))
 PREFIX = "GetAlarmsHistory_"
 
 
@@ -112,6 +115,8 @@ def _render_table(
 
 
 def main():
+    st.set_page_config(page_title='אנליזת אזעקות - שאגת הארי', layout='wide')
+
     # RTL alignment for the app
     st.markdown(
         """
@@ -234,7 +239,6 @@ def main():
         unsafe_allow_html=True,
     )
 
-    st.set_page_config(page_title='אנליזת אזעקות - שאגת הארי', layout='wide')
     st.sidebar.title('ניווט')
     page = st.sidebar.radio('בחר עמוד', ['טעינת קבצי JSON', 'ניתוח הנתונים'], label_visibility='collapsed')
 
@@ -335,7 +339,7 @@ def main():
                 with col2:
                     with st.spinner('טוען נתונים...'):
                         t_start = time.time()
-                        df, logs = run_data_load_pipeline(PATH, PREFIX)
+                        df, logs = run_data_load_pipeline(str(PATH), PREFIX)
                         t_end = time.time()
                 st.session_state['df'] = df
                 st.session_state['logs'] = logs
@@ -359,7 +363,7 @@ def main():
                     line-height: 1.6;
                 ">
                     <div>{file_count} קבצים נטענו בהצלחה | סה"כ {len(st.session_state["df"])} שורות{duration_str}</div>
-                    <div style="margin-top: 0.6rem;">נתיב מקור הנתונים: {PATH}</div>
+                    <div style="margin-top: 0.6rem;">נתיב מקור הנתונים: {PATH.resolve()}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,

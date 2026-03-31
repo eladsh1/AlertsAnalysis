@@ -1,11 +1,13 @@
 import sqlite3
 import time
+import tempfile
+import os
 from pathlib import Path
 from loader import Loader
 import pandas as pd
 
 
-DB_PATH = Path('alerts_analysis.db')
+DB_PATH = Path(os.getenv('DB_PATH', str(Path(tempfile.gettempdir()) / 'alerts_analysis.db')))
 
 
 def _ensure_db_schema(conn: sqlite3.Connection):
